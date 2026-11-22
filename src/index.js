@@ -41,10 +41,39 @@ app.use(
       },
     },
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
+// CORS: sirf frontend ke origins ko ijazat (CORS_ORIGINS=a,b mein badal sakte hain)
+const allowedOrigins = (process.env.CORS_ORIGINS || 'https://hardward-tuition-fee-fronend.vercel.app,http://localhost:5173')
+  .split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
+
+// Serverless (Vercel) mein har request par connection cache se milta hai
+let dbPromise;
+function connectDb() {
+  if (mongoose.connection.readyState === 1) return Promise.resolve();
+  if (!dbPromise) {
+    dbPromise = mongoose
+      .connect(process.env.MONGODB_URI, { dbName: process.env.DB_NAME || 'tuitionfee', serverSelectionTimeoutMS: 12000 })
+      .catch((e) => { dbPromise = null; throw e; });
+  }
+  return dbPromise;
+}
+app.use('/api', (req, res, next) => (req.path === '/health' ? next() : connectDb().then(() => next(), next)));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
 
@@ -81,10 +110,7 @@ const PORT = process.env.PORT || 5000;
 
 async function start() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI, {
-      dbName: process.env.DB_NAME || 'tuitionfee',
-      serverSelectionTimeoutMS: 12000,
-    });
+    await connectDb();
     console.log('MongoDB Atlas connect ho gaya');
   } catch (err) {
     console.error('MongoDB connect nahi hua:', err.message);
